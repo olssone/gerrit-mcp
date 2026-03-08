@@ -47,3 +47,10 @@ htmlcov/
 
 # AI Assistant Rules (Roo Code, etc.)
 .roo/
+
+# RPM Build Artifacts
+rpm/BUILD/
+rpm/BUILDROOT/
+rpm/RPMS/
+rpm/SRPMS/
+rpm/SOURCES/*.tar.gz

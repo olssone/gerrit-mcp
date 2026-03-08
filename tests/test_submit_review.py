@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Tests for review submission utilities."""
 
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-import sys
-from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from server import (
@@ -47,16 +47,14 @@ class TestBuildReviewComments:
 
     def test_invalid_line_value_raises_value_error(self):
         with pytest.raises(ValueError) as exc_info:
-            build_review_comments([
-                {"path": "file.py", "line": 0, "message": "Nope"}
-            ])
+            build_review_comments([{"path": "file.py", "line": 0, "message": "Nope"}])
         assert "line" in str(exc_info.value)
 
     def test_invalid_range_value_raises_value_error(self):
         with pytest.raises(ValueError) as exc_info:
-            build_review_comments([
-                {"path": "file.py", "range": "oops", "message": "Nope"}
-            ])
+            build_review_comments(
+                [{"path": "file.py", "range": "oops", "message": "Nope"}]
+            )
         assert "range" in str(exc_info.value)
 
 
@@ -69,14 +67,14 @@ class TestSubmitGerritReview:
     def test_submit_review_uses_current_revision(self, monkeypatch):
         calls = []
 
-        def fake_make_request(ctx, endpoint, *, method="GET", params=None, json_payload=None):
+        def fake_make_request(
+            ctx, endpoint, *, method="GET", params=None, json_payload=None
+        ):
             calls.append((endpoint, method, json_payload))
             if method == "GET":
                 return {
                     "current_revision": "rev123",
-                    "revisions": {
-                        "rev123": {"_number": 1}
-                    },
+                    "revisions": {"rev123": {"_number": 1}},
                 }
             return {"labels": {"Code-Review": 1}}
 
@@ -96,12 +94,12 @@ class TestSubmitGerritReview:
         assert calls[1][2]["labels"] == {"Code-Review": 1}
 
     def test_submit_review_patchset_not_found(self, monkeypatch):
-        def fake_make_request(ctx, endpoint, *, method="GET", params=None, json_payload=None):
+        def fake_make_request(
+            ctx, endpoint, *, method="GET", params=None, json_payload=None
+        ):
             return {
                 "current_revision": "rev123",
-                "revisions": {
-                    "rev123": {"_number": 1}
-                },
+                "revisions": {"rev123": {"_number": 1}},
             }
 
         monkeypatch.setattr("server.make_gerrit_rest_request", fake_make_request)
@@ -123,13 +121,13 @@ class TestSubmitGerritReview:
     def test_submit_review_respects_notify(self, monkeypatch):
         captured_payload = {}
 
-        def fake_make_request(ctx, endpoint, *, method="GET", params=None, json_payload=None):
+        def fake_make_request(
+            ctx, endpoint, *, method="GET", params=None, json_payload=None
+        ):
             if method == "GET":
                 return {
                     "current_revision": "rev123",
-                    "revisions": {
-                        "rev123": {"_number": 1}
-                    },
+                    "revisions": {"rev123": {"_number": 1}},
                 }
             captured_payload.update(json_payload or {})
             return {}

@@ -1,19 +1,22 @@
-import os
 import json
 import logging
+import os
 import re
-from typing import Optional, Dict, Any, Union, List
-from dataclasses import dataclass
-from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
-from urllib.parse import quote
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Union
+from urllib.parse import quote
+
 import requests
-
 from dotenv import load_dotenv
-from mcp.server.fastmcp import FastMCP, Context
+from mcp.server.fastmcp import Context, FastMCP
 
-from config import create_auth_handler, get_password
+try:
+    from .config import create_auth_handler, get_password
+except ImportError:
+    from config import create_auth_handler, get_password  # type: ignore[no-redef]
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -23,6 +26,7 @@ DEFAULT_REQUEST_TIMEOUT = 30
 
 # Load environment variables
 load_dotenv()
+
 
 @dataclass
 class GerritContext:
@@ -37,7 +41,6 @@ def resolve_ssl_verification_setting() -> Union[bool, str]:
     ssl_verify_env = os.getenv("GERRIT_SSL_VERIFY")
     ca_bundle_env = os.getenv("GERRIT_CA_BUNDLE")
 
-    # Explicit CA bundle takes precedence when provided
     if ca_bundle_env:
         ca_bundle_clean = ca_bundle_env.strip()
         if not ca_bundle_clean:
@@ -60,10 +63,11 @@ def resolve_ssl_verification_setting() -> Union[bool, str]:
     if normalized_value in {"1", "true", "yes", "on"}:
         return True
     if normalized_value in {"0", "false", "no", "off"}:
-        logger.warning("TLS verification disabled via GERRIT_SSL_VERIFY. Use with caution.")
+        logger.warning(
+            "TLS verification disabled via GERRIT_SSL_VERIFY. Use with caution."
+        )
         return False
 
-    # Allow specifying a direct CA bundle path via GERRIT_SSL_VERIFY
     potential_path = Path(ssl_verify_env.strip()).expanduser()
     if potential_path.exists() and potential_path.is_file():
         return str(potential_path)
@@ -72,7 +76,10 @@ def resolve_ssl_verification_setting() -> Union[bool, str]:
         "Invalid GERRIT_SSL_VERIFY value. Provide true/false or a path to a CA bundle."
     )
 
-def build_review_comments(comments: Optional[List[Dict[str, Any]]]) -> Dict[str, List[Dict[str, Any]]]:
+
+def build_review_comments(
+    comments: Optional[List[Dict[str, Any]]],
+) -> Dict[str, List[Dict[str, Any]]]:
     """Convert a flat comment definition list into Gerrit's review payload structure."""
     if not comments:
         return {}
@@ -93,10 +100,13 @@ def build_review_comments(comments: Optional[List[Dict[str, Any]]]) -> Dict[str,
         if not message or not isinstance(message, str):
             raise ValueError(f"Comment entry #{index} is missing a valid 'message'.")
 
-        # Remove path key but keep the remaining fields for Gerrit
-        payload_comment = {k: v for k, v in comment.items() if k != "path" and v is not None}
+        payload_comment = {
+            k: v for k, v in comment.items() if k != "path" and v is not None
+        }
         line_value = payload_comment.get("line")
-        if line_value is not None and (not isinstance(line_value, int) or line_value <= 0):
+        if line_value is not None and (
+            not isinstance(line_value, int) or line_value <= 0
+        ):
             raise ValueError(
                 f"Comment entry #{index} has invalid 'line' value; must be a positive integer."
             )
@@ -111,6 +121,7 @@ def build_review_comments(comments: Optional[List[Dict[str, Any]]]) -> Dict[str,
 
     return comment_map
 
+
 def make_gerrit_rest_request(
     ctx: Context,
     endpoint: str,
@@ -119,26 +130,23 @@ def make_gerrit_rest_request(
     params: Optional[Dict[str, Any]] = None,
     json_payload: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Make a REST API request to Gerrit and handle the response"""
+    """Make a REST API request to Gerrit and handle the response."""
     gerrit_ctx = ctx.request_context.lifespan_context
-    
+
     if not gerrit_ctx.http_password:
         logger.error("HTTP password not set in context")
-        raise ValueError("HTTP password not set. Please set GERRIT_HTTP_PASSWORD in your environment.")
-        
-    # Ensure endpoint starts with 'a/' for authenticated requests
-    if not endpoint.startswith('a/'):
-        endpoint = f'a/{endpoint}'
-    
+        raise ValueError(
+            "HTTP password not set. Please set GERRIT_HTTP_PASSWORD in your environment."
+        )
+
+    if not endpoint.startswith("a/"):
+        endpoint = f"a/{endpoint}"
+
     url = f"https://{gerrit_ctx.host}/{endpoint}"
-    
     auth = create_auth_handler(gerrit_ctx.user, gerrit_ctx.http_password)
-    
+
     try:
-        headers = {
-            'Accept': 'application/json',
-            'User-Agent': 'GerritReviewMCP/1.0'
-        }
+        headers = {"Accept": "application/json", "User-Agent": "GerritReviewMCP/1.0"}
 
         response = requests.request(
             method,
@@ -150,26 +158,27 @@ def make_gerrit_rest_request(
             verify=gerrit_ctx.verify_ssl,
             timeout=DEFAULT_REQUEST_TIMEOUT,
         )
-        
+
         if response.status_code == 401:
-            raise Exception("Authentication failed. Please check your Gerrit HTTP password in your account settings.")
-            
+            raise Exception(
+                "Authentication failed. Please check your Gerrit HTTP password in your account settings."
+            )
+
         response.raise_for_status()
-        
-        # Remove Gerrit's XSSI prefix if present
+
         content = response.text
         if content.startswith(")]}'"):
             content = content[4:]
         content = content.strip()
         if not content:
             return {}
-            
+
         try:
             return json.loads(content)
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse JSON response: {str(e)}")
             raise Exception(f"Failed to parse Gerrit response as JSON: {str(e)}")
-            
+
     except requests.exceptions.RequestException as e:
         logger.error(f"REST request failed: {str(e)}")
         response = getattr(e, "response", None)
@@ -180,25 +189,25 @@ def make_gerrit_rest_request(
 
 @asynccontextmanager
 async def gerrit_lifespan(server: FastMCP) -> AsyncIterator[GerritContext]:
-    """Manage Gerrit connection details"""
+    """Manage Gerrit connection details."""
     host = os.getenv("GERRIT_HOST", "")
     user = os.getenv("GERRIT_USER", "")
-    
-    # Log simple error if user includes protocol in GERRIT_HOST
-    if host.startswith(('http://', 'https://')):
+
+    if host.startswith(("http://", "https://")):
         logger.warning("GERRIT_HOST should not include protocol; stripping scheme.")
-        host = re.sub(r'^https?://', '', host).rstrip('/')
-    
+        host = re.sub(r"^https?://", "", host).rstrip("/")
+
     if not all([host, user]):
         logger.error("Missing required environment variables:")
-        if not host: logger.error("- GERRIT_HOST not set")
-        if not user: logger.error("- GERRIT_USER not set")
+        if not host:
+            logger.error("- GERRIT_HOST not set")
+        if not user:
+            logger.error("- GERRIT_USER not set")
         raise ValueError(
             "Missing required environment variables: GERRIT_HOST, GERRIT_USER. "
             "Please set these in your environment or .env file."
         )
 
-    # Get the appropriate password based on authentication method
     try:
         password = get_password()
     except ValueError as e:
@@ -207,7 +216,9 @@ async def gerrit_lifespan(server: FastMCP) -> AsyncIterator[GerritContext]:
 
     verify_ssl = resolve_ssl_verification_setting()
 
-    ctx = GerritContext(host=host, user=user, http_password=password, verify_ssl=verify_ssl)
+    ctx = GerritContext(
+        host=host, user=user, http_password=password, verify_ssl=verify_ssl
+    )
     try:
         yield ctx
     finally:
@@ -218,158 +229,172 @@ async def gerrit_lifespan(server: FastMCP) -> AsyncIterator[GerritContext]:
 mcp = FastMCP(
     "Gerrit Review",
     lifespan=gerrit_lifespan,
-    dependencies=["python-dotenv", "requests"]
+    dependencies=["python-dotenv", "requests"],
 )
 
+
 @mcp.tool()
-def fetch_gerrit_change(ctx: Context, change_id: str, patchset_number: Optional[str] = None, include_comments: bool = False) -> Dict[str, Any]:
+def fetch_gerrit_change(
+    ctx: Context,
+    change_id: str,
+    patchset_number: Optional[str] = None,
+    include_comments: bool = False,
+) -> Dict[str, Any]:
     """
     Fetch a Gerrit change and its contents.
-    
+
     Args:
-        change_id: The Gerrit change ID to fetch
-        patchset_number: Optional patchset number to fetch (defaults to latest)
-        include_comments: Optional boolean to include inline comments (defaults to False)
+      change_id: The Gerrit change ID to fetch
+      patchset_number: Optional patchset number to fetch (defaults to latest)
+      include_comments: Optional boolean to include inline comments (defaults to False)
     Returns:
-        Dict containing the raw change information including files and diffs
+      Dict containing the raw change information including files and diffs
     """
-    # Get change details using REST API with all required information
     change_endpoint = f"a/changes/{change_id}/detail?o=CURRENT_REVISION&o=CURRENT_COMMIT&o=MESSAGES&o=DETAILED_LABELS&o=DETAILED_ACCOUNTS&o=ALL_REVISIONS&o=ALL_COMMITS&o=ALL_FILES&o=COMMIT_FOOTERS"
     change_info = make_gerrit_rest_request(ctx, change_endpoint)
-    
+
     if not change_info:
         raise ValueError(f"Change {change_id} not found")
-        
-    # Extract project and ref information
+
     project = change_info.get("project")
     if not project:
         raise ValueError("Project information not found in change")
-        
-    # Get the target patchset
+
     current_revision = change_info.get("current_revision")
     revisions = change_info.get("revisions", {})
-    
+
     if patchset_number:
-        # Find specific patchset
         target_revision = None
         for rev, rev_info in revisions.items():
             if str(rev_info.get("_number")) == str(patchset_number):
                 target_revision = rev
                 break
         if not target_revision:
-            available_patchsets = sorted([str(info.get("_number")) for info in revisions.values()])
-            raise ValueError(f"Patchset {patchset_number} not found. Available patchsets: {', '.join(available_patchsets)}")
+            available_patchsets = sorted(
+                [str(info.get("_number")) for info in revisions.values()]
+            )
+            raise ValueError(
+                f"Patchset {patchset_number} not found. Available patchsets: {', '.join(available_patchsets)}"
+            )
     else:
-        # Use current revision
         target_revision = current_revision
-    
+
     if not target_revision or target_revision not in revisions:
         raise ValueError("Revision information not found")
 
     revision_info = revisions[target_revision]
-    
-    # Process each file with configurable filtering
+
     processed_files = []
     excluded_files = []
-    
-    # Get exclusion patterns from environment or use defaults
+
     excluded_patterns_str = os.getenv("GERRIT_EXCLUDED_PATTERNS", "")
     if excluded_patterns_str:
-        excluded_patterns = [pattern.strip() for pattern in excluded_patterns_str.split(",") if pattern.strip()]
+        excluded_patterns = [
+            pattern.strip()
+            for pattern in excluded_patterns_str.split(",")
+            if pattern.strip()
+        ]
     else:
         excluded_patterns = []
-    
+
     for file_path, file_info in revision_info.get("files", {}).items():
         if file_path == "/COMMIT_MSG":
             continue
-        
-        # Check if file should be excluded based on patterns only
+
         should_exclude = False
         exclude_reason = ""
-        
-        # Check for excluded patterns
+
         for pattern in excluded_patterns:
             if re.search(pattern, file_path):
                 should_exclude = True
                 exclude_reason = f"Excluded pattern: {pattern}"
                 break
-        
+
         if should_exclude:
-            excluded_files.append({
-                "path": file_path,
-                "status": file_info.get("status", "MODIFIED"),
-                "lines_inserted": file_info.get("lines_inserted", 0),
-                "lines_deleted": file_info.get("lines_deleted", 0),
-                "size_delta": file_info.get("size_delta", 0),
-                "exclude_reason": exclude_reason
-            })
+            excluded_files.append(
+                {
+                    "path": file_path,
+                    "status": file_info.get("status", "MODIFIED"),
+                    "lines_inserted": file_info.get("lines_inserted", 0),
+                    "lines_deleted": file_info.get("lines_deleted", 0),
+                    "size_delta": file_info.get("size_delta", 0),
+                    "exclude_reason": exclude_reason,
+                }
+            )
             continue
-            
-        # Get the diff for this file
-        encoded_path = quote(file_path, safe='')
+
+        encoded_path = quote(file_path, safe="")
         diff_endpoint = f"a/changes/{change_id}/revisions/{target_revision}/files/{encoded_path}/diff"
         diff_info = make_gerrit_rest_request(ctx, diff_endpoint)
-        
+
         file_data = {
             "path": file_path,
             "status": file_info.get("status", "MODIFIED"),
             "lines_inserted": file_info.get("lines_inserted", 0),
             "lines_deleted": file_info.get("lines_deleted", 0),
             "size_delta": file_info.get("size_delta", 0),
-            "diff": diff_info
+            "diff": diff_info,
         }
         processed_files.append(file_data)
-    
-    # Fetch inline comments for the target revision (if requested)
+
     inline_comments = {}
     if include_comments:
         try:
-            comments_endpoint = f"a/changes/{change_id}/revisions/{target_revision}/comments"
+            comments_endpoint = (
+                f"a/changes/{change_id}/revisions/{target_revision}/comments"
+            )
             inline_comments = make_gerrit_rest_request(ctx, comments_endpoint)
         except Exception as e:
-            logger.warning(f"Failed to fetch inline comments for change {change_id}: {str(e)}")
+            logger.warning(
+                f"Failed to fetch inline comments for change {change_id}: {str(e)}"
+            )
             inline_comments = {}
-    
-    # Return the complete change information
+
     result = {
         "change_info": change_info,
         "project": project,
         "revision": target_revision,
         "patchset": revision_info,
         "files": processed_files,
-        "inline_comments": inline_comments
+        "inline_comments": inline_comments,
     }
-    
+
     if excluded_files:
         result["excluded_large_files"] = excluded_files
-        result["_note"] = f"Excluded {len(excluded_files)} large files to prevent infinite loops. Use fetch_patchset_diff for specific large files."
-    
+        result["_note"] = (
+            f"Excluded {len(excluded_files)} large files to prevent infinite loops. Use fetch_patchset_diff for specific large files."
+        )
+
     return result
 
 
 @mcp.tool()
-def fetch_patchset_diff(ctx: Context, change_id: str, base_patchset: str, target_patchset: str, file_path: Optional[str] = None) -> Dict[str, Any]:
+def fetch_patchset_diff(
+    ctx: Context,
+    change_id: str,
+    base_patchset: str,
+    target_patchset: str,
+    file_path: Optional[str] = None,
+) -> Dict[str, Any]:
     """
     Fetch differences between two patchsets of a Gerrit change.
-    
+
     Args:
-        change_id: The Gerrit change ID
-        base_patchset: The base patchset number to compare from
-        target_patchset: The target patchset number to compare to
-        file_path: Optional specific file path to get diff for. If not provided, returns diffs for all changed files.
+      change_id: The Gerrit change ID
+      base_patchset: The base patchset number to compare from
+      target_patchset: The target patchset number to compare to
+      file_path: Optional specific file path to get diff for.
     Returns:
-        Dict containing the diff information between the patchsets
+      Dict containing the diff information between the patchsets
     """
-    # First get the revision info for both patchsets
     change_endpoint = f"a/changes/{change_id}/detail?o=ALL_REVISIONS&o=ALL_FILES"
     change_info = make_gerrit_rest_request(ctx, change_endpoint)
-    
+
     if not change_info:
         raise ValueError(f"Change {change_id} not found")
-    
+
     revisions = change_info.get("revisions", {})
-    
-    # Find revision hashes for both patchsets
+
     base_revision = None
     target_revision = None
     for rev, rev_info in revisions.items():
@@ -377,46 +402,47 @@ def fetch_patchset_diff(ctx: Context, change_id: str, base_patchset: str, target
             base_revision = rev
         if str(rev_info.get("_number")) == str(target_patchset):
             target_revision = rev
-            
-    if not base_revision or not target_revision:
-        available_patchsets = sorted([str(info.get("_number")) for info in revisions.values()])
-        raise ValueError(f"Patchset(s) not found. Available patchsets: {', '.join(available_patchsets)}")
 
-    # Get the diff between revisions using Gerrit's comparison endpoint
+    if not base_revision or not target_revision:
+        available_patchsets = sorted(
+            [str(info.get("_number")) for info in revisions.values()]
+        )
+        raise ValueError(
+            f"Patchset(s) not found. Available patchsets: {', '.join(available_patchsets)}"
+        )
+
     diff_endpoint = f"a/changes/{change_id}/revisions/{target_revision}/files"
     if base_revision:
         diff_endpoint += f"?base={base_revision}"
-    
+
     files_diff = make_gerrit_rest_request(ctx, diff_endpoint)
-    
-    # Process the files that actually changed
+
     changed_files = {}
     for file_path, file_info in files_diff.items():
         if file_path == "/COMMIT_MSG":
             continue
-            
-        if file_info.get("status") != "SAME":  # Only include files that actually changed
-            # Get detailed diff for this file
-            encoded_path = quote(file_path, safe='')
+
+        if file_info.get("status") != "SAME":
+            encoded_path = quote(file_path, safe="")
             file_diff_endpoint = f"a/changes/{change_id}/revisions/{target_revision}/files/{encoded_path}/diff"
             if base_revision:
                 file_diff_endpoint += f"?base={base_revision}"
             diff_info = make_gerrit_rest_request(ctx, file_diff_endpoint)
-            
+
             changed_files[file_path] = {
                 "status": file_info.get("status", "MODIFIED"),
                 "lines_inserted": file_info.get("lines_inserted", 0),
                 "lines_deleted": file_info.get("lines_deleted", 0),
                 "size_delta": file_info.get("size_delta", 0),
-                "diff": diff_info
+                "diff": diff_info,
             }
-    
+
     return {
         "base_revision": base_revision,
         "target_revision": target_revision,
         "base_patchset": base_patchset,
         "target_patchset": target_patchset,
-        "files": changed_files
+        "files": changed_files,
     }
 
 
@@ -433,9 +459,13 @@ def submit_gerrit_review(
     """Submit a review message (and optional votes/comments) to Gerrit."""
 
     if not any([message, labels, comments]):
-        raise ValueError("Review submission requires at least one of message, labels, or comments.")
+        raise ValueError(
+            "Review submission requires at least one of message, labels, or comments."
+        )
 
-    change_endpoint = "a/changes/{change_id}/detail?o=ALL_REVISIONS".format(change_id=change_id)
+    change_endpoint = "a/changes/{change_id}/detail?o=ALL_REVISIONS".format(
+        change_id=change_id
+    )
     change_info = make_gerrit_rest_request(ctx, change_endpoint)
 
     revisions = change_info.get("revisions", {})
@@ -483,11 +513,12 @@ def submit_gerrit_review(
         "submitted": response,
     }
 
+
+def main() -> None:
+    """Entry point for the gerrit-review-mcp console script."""
+    logger.info("Starting Gerrit Review MCP server")
+    mcp.run(transport="stdio")
+
+
 if __name__ == "__main__":
-    try:
-        logger.info("Starting Gerrit Review MCP server")
-        # Initialize and run the server
-        mcp.run(transport='stdio')
-    except Exception as e:
-        logger.error(f"Failed to start MCP server: {str(e)}")
-        raise
+    main()

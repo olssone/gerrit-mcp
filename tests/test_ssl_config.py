@@ -2,12 +2,12 @@
 """Unit tests for TLS verification configuration handling."""
 
 import os
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from server import resolve_ssl_verification_setting
@@ -59,7 +59,9 @@ class TestSSLVerificationSetting:
         bundle_path = tmp_path / "ca.pem"
         bundle_path.write_text("certificate")
 
-        with patch.dict(os.environ, {"GERRIT_SSL_VERIFY": str(bundle_path)}, clear=True):
+        with patch.dict(
+            os.environ, {"GERRIT_SSL_VERIFY": str(bundle_path)}, clear=True
+        ):
             assert resolve_ssl_verification_setting() == str(bundle_path)
 
     def test_invalid_value_raises_error(self):
@@ -70,7 +72,9 @@ class TestSSLVerificationSetting:
 
     def test_missing_ca_bundle_path_raises_error(self):
         """Missing CA bundle path leads to ValueError."""
-        with patch.dict(os.environ, {"GERRIT_CA_BUNDLE": "/non/existent/path.pem"}, clear=True):
+        with patch.dict(
+            os.environ, {"GERRIT_CA_BUNDLE": "/non/existent/path.pem"}, clear=True
+        ):
             with pytest.raises(ValueError) as exc_info:
                 resolve_ssl_verification_setting()
             assert "does not exist" in str(exc_info.value)

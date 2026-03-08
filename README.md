@@ -1,27 +1,49 @@
 # Gerrit Review MCP Server
 
-[![smithery badge](https://smithery.ai/badge/@cayirtepeomer/gerrit-code-review-mcp)](https://smithery.ai/server/@cayirtepeomer/gerrit-code-review-mcp)
+MCP server for Gerrit Code Review integration
 
-This MCP server provides integration with Gerrit code review system, allowing AI assistants to review code changes and their details through a simple interface.
+Provides tools for fetching changes, comparing patchsets, and submitting reviews via the Gerrit REST API.
+
+---
+
+## Repository Structure
+
+```
+gerrit-mcp/
+├── src/                           # Python package
+│   ├── __init__.py
+│   ├── config.py                  # Auth configuration module
+│   └── server.py                  # MCP server (entry point: main())
+├── tests/
+│   ├── conftest.py                # pytest path setup
+│   ├── test_auth_config.py
+│   ├── test_docker_integration.py
+│   ├── test_inline_comments.py
+│   ├── test_ssl_config.py
+│   └── test_submit_review.py
+├── rpm/
+│   ├── SOURCES/                   # Tarballs (generated, gitignored)
+│   └── SPECS/
+│       └── gerrit-review-mcp.spec # RPM spec
+├── Dockerfile                     # Container image (python:3.12-slim)
+├── Makefile                       # RPM + dev targets
+├── pyproject.toml                 # Project metadata + build config
+├── requirements.txt               # Pinned runtime deps
+└── README.md
+```
+
+---
 
 ## Features
 
-The server provides a streamlined toolset for code review:
-
 ### Fetch Change Details
 ```python
-fetch_gerrit_change(change_id: str, patchset_number: Optional[str] = None)
+fetch_gerrit_change(change_id: str, patchset_number: Optional[str] = None, include_comments: bool = False)
 ```
 - Fetches complete change information including files and patch sets
-- Shows detailed diff information for each modified file
-- Displays file changes, insertions, and deletions
-- Supports reviewing specific patch sets
-- Returns comprehensive change details including:
-  - Project and branch information
-  - Author and reviewer details
-  - Comments and review history
-  - File modifications with diff content
-  - Current patch set information
+- Returns diffs, author/reviewer details, comments, and review history
+- Optional inline comment retrieval via `include_comments=True`
+- Supports file exclusion via `GERRIT_EXCLUDED_PATTERNS`
 
 ### Compare Patchset Differences
 ```python
@@ -29,8 +51,6 @@ fetch_patchset_diff(change_id: str, base_patchset: str, target_patchset: str, fi
 ```
 - Compare differences between two patchsets of a change
 - View specific file differences or all changed files
-- Analyze code modifications across patchset versions
-- Track evolution of changes through review iterations
 
 ### Submit Review Feedback
 ```python
@@ -43,249 +63,270 @@ submit_gerrit_review(
     notify: str = "OWNER",
 )
 ```
-- Post summary feedback, vote labels (e.g., `{"Code-Review": 1}`), and inline/file-level comments
-- Target a specific patchset or default to the latest revision
-- Control Gerrit's notification behaviour (`notify`: `NONE`, `OWNER`, `OWNER_REVIEWERS`, `ALL`)
-- Comment payloads accept dictionaries with `path`, `message`, and optional Gerrit comment fields (`line`, `side`, `range`, ...)
+- Post summary feedback, vote labels (e.g., `{"Code-Review": 1}`), and inline comments
+- Control notification scope: `NONE`, `OWNER`, `OWNER_REVIEWERS`, `ALL`
 
 ### Example Usage
 
-Review a complete change:
 ```python
-# Fetch latest patchset of change 23824
+# Fetch latest patchset
 change = fetch_gerrit_change("23824")
-```
 
-Submit review feedback with a vote and inline comment:
-```python
+# Submit a vote with an inline comment
 submit_gerrit_review(
     change_id="23824",
     message="Looks good overall",
     labels={"Code-Review": 1},
     comments=[{"path": "src/app.py", "line": 42, "message": "Nice refactor."}],
-    patchset_number="2",           # optional: target a specific patchset
-    notify="OWNER_REVIEWERS",      # optional: adjust notification scope
+    patchset_number="2",
+    notify="OWNER_REVIEWERS",
 )
-```
 
-Compare specific patchsets:
-```python
-# Compare differences between patchsets 1 and 2 for change 23824
+# Compare two patchsets
 diff = fetch_patchset_diff("23824", "1", "2")
+
+# Get diff for a specific file
+file_diff = fetch_patchset_diff("23824", "1", "2", "path/to/file.py")
 ```
 
-View specific file changes:
-```python
-# Get diff for a specific file between patchsets
-file_diff = fetch_patchset_diff("23824", "1", "2", "path/to/file.swift")
-```
+---
 
 ## Prerequisites
 
-- Python 3.10 or higher (Python 3.11 recommended)
-- Gerrit HTTP access credentials
-- HTTP password generated from Gerrit settings
-- Access to the `mcp[cli]` package repository (private package)
+- Python 3.10 or higher (Python 3.12 recommended)
+- Gerrit HTTP access credentials (HTTP password from Gerrit Settings > HTTP Credentials)
+
+---
 
 ## Installation
 
-### Installing via Smithery
-
-To install gerrit-code-review-mcp for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@cayirtepeomer/gerrit-code-review-mcp):
+### Option 1: Development (editable install)
 
 ```bash
-npx -y @smithery/cli install @cayirtepeomer/gerrit-code-review-mcp --client claude
-```
+git clone https://github.com/olssone/gerrit-mcp.git
+cd gerrit-mcp
 
-### Manual Installation
-1. Clone this repository:
-```bash
-git clone <repository-url>
-cd gerrit-review-mcp
-```
-
-2. Create and activate a virtual environment:
-```bash
-# For macOS/Linux:
 python -m venv .venv
 source .venv/bin/activate
 
-# For Windows:
-python -m venv .venv
-.venv\Scripts\activate
+# Install with dev dependencies
+make dev-install
+# or: pip install -e ".[dev]"
 ```
 
-3. Install this package in editable mode with its dependencies:
+### Option 2: System-wide via RPM (RHEL/Rocky Linux 9)
+
 ```bash
-pip install -e .
+# Build requirements
+sudo dnf install -y rpm-build python3.12 python3.12-pip
+
+# Build and install
+make rpm
+make install
 ```
+
+See the [RPM Build System](#rpm-build-system) section for full details.
+
+### Option 3: Docker
+
+```bash
+docker build -t gerrit-review-mcp .
+docker run --env-file .env gerrit-review-mcp
+```
+
+---
 
 ## Configuration
 
-1. Set up environment variables:
+Set environment variables or create a `.env` file in the project root:
+
 ```bash
-export GERRIT_HOST="gerrit.example.com"  # Your Gerrit server hostname (without https://)
-export GERRIT_USER="your-username"       # Your Gerrit account username
-export GERRIT_HTTP_PASSWORD="your-http-password"  # Generated HTTP password from Gerrit Settings > HTTP Credentials
-export GERRIT_EXCLUDED_PATTERNS="\.pbxproj$,\.xcworkspace$,node_modules/"  # Optional: regex patterns for files to exclude from reviews
-# Optional TLS configuration for custom or self-signed certificates
-export GERRIT_SSL_VERIFY="true"              # Set to 'false' to skip TLS verification in constrained environments
-export GERRIT_CA_BUNDLE="/path/to/ca.pem"    # Optional custom CA bundle path used when verification stays enabled
-# Note: If both are set, GERRIT_CA_BUNDLE takes precedence and verification stays enabled using that bundle.
-```
-
-Or create a `.env` file:
-```
-GERRIT_HOST=gerrit.example.com
+# Required
+GERRIT_HOST=gerrit.example.com          # Hostname only — no https://
 GERRIT_USER=your-username
-GERRIT_HTTP_PASSWORD=your-http-password
-GERRIT_EXCLUDED_PATTERNS=\.pbxproj$,\.xcworkspace$,node_modules/
-GERRIT_SSL_VERIFY=true
-GERRIT_CA_BUNDLE=/path/to/ca.pem
-# If both are set, the CA bundle wins.
+GERRIT_HTTP_PASSWORD=your-http-password  # From Gerrit Settings > HTTP Credentials
+
+# Optional
+GERRIT_AUTH_METHOD=digest               # 'digest' (default) or 'basic' (LDAP)
+GERRIT_PASSWORD=your-ldap-password      # Required only when GERRIT_AUTH_METHOD=basic
+GERRIT_EXCLUDED_PATTERNS=\.pbxproj$,\.xcworkspace$,node_modules/  # Comma-separated regex
+
+# TLS (optional)
+GERRIT_SSL_VERIFY=true                  # Set to 'false' to skip verification
+GERRIT_CA_BUNDLE=/path/to/ca.pem        # Custom CA bundle (takes precedence over SSL_VERIFY)
 ```
 
-2. Generate HTTP password:
-- Log into your Gerrit web interface
-- Go to Settings > HTTP Credentials
-- Generate new password
-- Copy the password to your environment or .env file
+### Authentication Methods
 
-3. Configure file exclusions (optional):
-- Set `GERRIT_EXCLUDED_PATTERNS` to exclude specific file types from change reviews
-- Use comma-separated regex patterns (e.g., `\.pbxproj$,\.xcworkspace$,node_modules/`)
-- Leave empty or unset to use default exclusions
-- This helps prevent infinite loops with large files
+| Method | Env var for password | Use case |
+|--------|---------------------|----------|
+| `digest` (default) | `GERRIT_HTTP_PASSWORD` | Standard Gerrit HTTP credentials |
+| `basic` | `GERRIT_PASSWORD` | LDAP / `gitBasicAuthPolicy = HTTP_LDAP` |
 
-## MCP Configuration
+---
 
-To use this MCP server with Cursor or RooCode, you need to add its configuration to your `~/.cursor/mcp.json` or `.roo/mcp.json` file. Here's the required configuration:
+## MCP Client Configuration
+
+### After RPM install (system-wide)
 
 ```json
 {
   "mcpServers": {
     "gerrit-review-mcp": {
-      "command": "/path/to/your/workspace/gerrit-code-review-mcp/.venv/bin/python",
-      "args": [
-        "/path/to/your/workspace/gerrit-code-review-mcp/server.py",
-        "--transport",
-        "stdio"
-      ],
-      "cwd": "/path/to/your/workspace/gerrit-code-review-mcp",
+      "command": "gerrit-review-mcp",
+      "args": [],
       "env": {
-        "PYTHONPATH": "/path/to/your/workspace/gerrit-code-review-mcp",
-        "VIRTUAL_ENV": "/path/to/your/workspace/gerrit-code-review-mcp/.venv",
-        "PATH": "/path/to/your/workspace/gerrit-code-review-mcp/.venv/bin:/usr/local/bin:/usr/bin:/bin"
+        "GERRIT_HOST": "gerrit.example.com",
+        "GERRIT_USER": "your-username",
+        "GERRIT_HTTP_PASSWORD": "your-http-password"
       },
-      "stdio": true
+      "alwaysAllow": [
+        "fetch_gerrit_change",
+        "fetch_patchset_diff",
+        "submit_gerrit_review"
+      ]
     }
   }
 }
 ```
 
-Replace `/path/to/your/workspace` with your actual workspace path. For example, if your project is in `/Users/username/projects/gerrit-code-review-mcp`, use that path instead.
+### After development install (venv)
 
-Make sure all paths in the configuration point to:
-- Your virtual environment's Python interpreter
-- The project's `server.py` file
-- The correct working directory
-- The virtual environment's bin directory in the PATH
+```json
+{
+  "mcpServers": {
+    "gerrit-review-mcp": {
+      "command": "/path/to/gerrit-mcp/.venv/bin/gerrit-review-mcp",
+      "args": [],
+      "env": {
+        "GERRIT_HOST": "gerrit.example.com",
+        "GERRIT_USER": "your-username",
+        "GERRIT_HTTP_PASSWORD": "your-http-password"
+      },
+      "alwaysAllow": [
+        "fetch_gerrit_change",
+        "fetch_patchset_diff",
+        "submit_gerrit_review"
+      ]
+    }
+  }
+}
+```
 
-## Implementation Details
+---
 
-The server uses Gerrit REST API to interact with Gerrit, providing:
-- Fast and reliable change information retrieval
-- Secure authentication using HTTP digest auth
-- Support for various Gerrit REST endpoints
-- Clean and maintainable codebase
-- HTTPS encryption for secure communication
+## Development
 
-## Troubleshooting
+### Make Targets
 
-If you encounter connection issues:
-1. Verify your HTTP password is correctly set in `GERRIT_HTTP_PASSWORD`
-2. Check `GERRIT_HOST` setting (hostname only, without https://)
-3. Ensure HTTPS access is enabled on Gerrit server
-4. Test connection using curl with the `/a/` prefix for authenticated API calls:
-   ```bash
-   curl -u "your-username:your-http-password" https://your-gerrit-server.com/a/changes/?q=status:open
-   ```
-5. Verify Gerrit access permissions for your account
-
-### HTTP Credentials Authentication Issues
-
-If you're having trouble with authentication, check your Gerrit config for `gitBasicAuthPolicy = HTTP` (or `HTTP_LDAP`).
-
-### Working with Self-Signed Certificates
-
-- `GERRIT_SSL_VERIFY=false` disables TLS verification when Gerrit uses an internally issued certificate lacking required Subject Alternative Name (SAN) entries.
-- Provide a custom certificate bundle via `GERRIT_CA_BUNDLE=/path/to/ca.pem` to keep verification enabled while trusting a private CA.
-- Treat disabled verification as a temporary workaround until a certificate with matching SANs is issued for the Gerrit hostnames you access.
-
-## License
-
-This project is licensed under the MIT License.
-
-## Testing
-
-This project includes comprehensive Docker integration tests using testcontainers-python for reliable cross-platform testing.
+| Target        | Description                                  |
+|---------------|----------------------------------------------|
+| `dev-install` | Install package + dev deps in editable mode  |
+| `test`        | Run pytest suite                             |
+| `lint`        | Check formatting with black + isort          |
+| `format`      | Auto-format with black + isort               |
+| `rpm`         | Build binary RPM                             |
+| `srpm`        | Build source RPM                             |
+| `tarball`     | Create source tarball only                   |
+| `install`     | Install the RPM locally via dnf              |
+| `clean`       | Remove RPM build artifacts                   |
+| `info`        | Show build configuration                     |
+| `help`        | Show help                                    |
 
 ### Running Tests
 
-To run the full test suite:
 ```bash
-# Install development dependencies
-pip install -e ".[dev]"
+# Install dev deps
+make dev-install
 
 # Run all tests
-pytest
+make test
 
-# Run only integration tests
-pytest -m integration
-
-# Run with verbose output
-pytest -v
+# Run only unit tests (no Docker required)
+pytest -m "not docker"
 
 # Run with coverage
-pytest --cov=. --cov-report=html
+pytest --cov=src --cov-report=html
+
+# Run integration/Docker tests
+pytest -m docker
 ```
 
 ### Test Environment Variables
 
-The following environment variables can be used to configure test behavior:
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TEST_STARTUP_TIMEOUT` | `30` | Container startup timeout (seconds) |
+| `TEST_LOGS_SETTLE_DELAY` | `0` | Delay before checking logs (seconds) |
+| `DOCKER_HOST` | — | Remote Docker daemon host |
 
-- `TEST_STARTUP_TIMEOUT`: Container startup timeout in seconds (default: 30)
-- `TEST_LOGS_SETTLE_DELAY`: Delay before checking logs in seconds (default: 0)
-- `DOCKER_HOST`: Docker daemon host for remote Docker (optional)
+Docker integration tests are automatically skipped if Docker is not available.
 
-Example:
+---
+
+## Troubleshooting
+
+**Authentication failed:**
+- Verify `GERRIT_HTTP_PASSWORD` is set and correct
+- Check `GERRIT_HOST` is hostname only (no `https://`)
+- Test with curl: `curl -u "user:pass" https://gerrit.example.com/a/changes/?q=status:open`
+
+**`GERRIT_AUTH_METHOD=basic` not working:**
+- Verify Gerrit config has `gitBasicAuthPolicy = HTTP` or `HTTP_LDAP`
+- Set `GERRIT_PASSWORD` (not `GERRIT_HTTP_PASSWORD`) for LDAP
+
+**Self-signed certificate errors:**
+- Set `GERRIT_SSL_VERIFY=false` (temporary workaround)
+- Or provide `GERRIT_CA_BUNDLE=/path/to/ca.pem` for a custom CA
+
+---
+
+## RPM Build System
+
+### Quick Start
+
 ```bash
-# Run tests with custom timeouts
-TEST_STARTUP_TIMEOUT=60 TEST_LOGS_SETTLE_DELAY=1 pytest tests/test_docker_integration.py -v
+sudo dnf install -y rpm-build python3.12 python3.12-pip
+make rpm
+make install
 ```
 
-### Docker Requirements
+### Build Output
 
-Docker integration tests require:
-- Docker daemon running and accessible
-- Docker socket available at `/var/run/docker.sock` (Linux/macOS) or `DOCKER_HOST` set
-- Sufficient permissions to build and run containers
+- Binary RPM: `rpm/RPMS/x86_64/gerrit-review-mcp-<version>-1.el9.x86_64.rpm`
+- Source tarball: `rpm/SOURCES/gerrit-review-mcp-<version>.tar.gz`
 
-Tests will be automatically skipped if Docker is not available.
+### Installed Files
 
-### CI/CD Integration
+```
+/opt/gerrit-review-mcp/
+├── venv/                          # Python 3.12 virtual environment
+│   └── bin/
+│       └── gerrit-review-mcp      # Installed console script (entry point)
+├── bin/
+│   └── gerrit-review-mcp          # Wrapper → venv/bin/gerrit-review-mcp
+└── share/examples/
+    └── mcp-config.json            # Example MCP client configuration
 
-For CI/CD environments, ensure:
-- Docker-in-Docker (DinD) service is available
-- Docker socket is mounted or `DOCKER_HOST` is configured
-- Sufficient timeout values are set for slower environments
+/usr/bin/gerrit-review-mcp -> /opt/gerrit-review-mcp/bin/gerrit-review-mcp
+```
 
-## Contributing
+### Version Management
 
-We welcome contributions! Please:
+Version is read automatically from `pyproject.toml`. Override at build time:
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Run the test suite to ensure everything works
-5. Submit a pull request
+```bash
+make rpm VERSION=0.2.0 RELEASE=2
+```
+
+### Uninstall
+
+```bash
+sudo dnf remove gerrit-review-mcp
+```
+
+---
+
+## License
+
+MIT
