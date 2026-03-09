@@ -7,7 +7,7 @@
 %define source_dir %{name}-%{version}
 
 Name:           gerrit-review-mcp
-Version:        0.1.0
+Version:        0.2.0
 Release:        1%{?dist}
 Summary:        MCP server for Gerrit Code Review integration
 
@@ -51,9 +51,9 @@ mkdir -p %{buildroot}%{_docdir}/%{name}
 cp -a %{_builddir}/venv %{buildroot}%{install_dir}/
 
 # Fix hardcoded shebangs in venv scripts
-# Replace BUILD directory paths with final installation paths
+# Replace BUILD directory paths with the installed venv python
 find %{buildroot}%{install_dir}/venv/bin -type f -exec sed -i \
-  "s|#!%{_builddir}/venv/bin/python.*|#!/usr/bin/env python3|g" {} \;
+  "s|#!%{_builddir}/venv/bin/python.*|#!%{install_dir}/venv/bin/python3|g" {} \;
 
 # Install wrapper script — delegates to the installed console script
 cat > %{buildroot}%{install_dir}/bin/%{name} << 'EOF'

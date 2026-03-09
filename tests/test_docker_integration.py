@@ -362,14 +362,16 @@ class TestDockerIntegrationTestcontainers:
                 expected_file in file_list
             ), f"Expected file/dir {expected_file} not found in container /app/"
 
-        # Verify src package contents
-        src_result = gerrit_mcp_container.exec(["ls", "/app/src/"])
-        assert src_result.exit_code == 0
-        src_list = src_result.output.decode("utf-8")
-        for src_file in ["server.py", "config.py"]:
+        # Verify package contents inside src/gerrit_review_mcp/
+        pkg_result = gerrit_mcp_container.exec(
+            ["ls", "/app/src/gerrit_review_mcp/"]
+        )
+        assert pkg_result.exit_code == 0, "Could not list /app/src/gerrit_review_mcp/"
+        pkg_list = pkg_result.output.decode("utf-8")
+        for pkg_file in ["server.py", "config.py"]:
             assert (
-                src_file in src_list
-            ), f"Expected {src_file} not found in container /app/src/"
+                pkg_file in pkg_list
+            ), f"Expected {pkg_file} not found in container /app/src/gerrit_review_mcp/"
 
         # Optional files (requirements.txt may not exist in PEP 621 builds)
         # We don't assert on optional files, just check they exist if present

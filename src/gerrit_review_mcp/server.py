@@ -14,9 +14,9 @@ from dotenv import load_dotenv
 from mcp.server.fastmcp import Context, FastMCP
 
 try:
-    from .config import create_auth_handler, get_password
+  from .config import create_auth_handler, get_password
 except ImportError:
-    from config import create_auth_handler, get_password  # type: ignore[no-redef]
+  from config import create_auth_handler, get_password  # type: ignore[no-redef]
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
