@@ -2,7 +2,7 @@
 
 MCP server for Gerrit Code Review integration
 
-Provides tools for fetching changes, comparing patchsets, and submitting reviews via the Gerrit REST API.
+Provides tools for fetching changes, comparing patchsets, submitting reviews, and posting draft inline comments via the Gerrit REST API.
 
 ---
 
@@ -18,6 +18,7 @@ gerrit-mcp/
 │   ├── conftest.py                # pytest path setup
 │   ├── test_auth_config.py
 │   ├── test_docker_integration.py
+│   ├── test_draft_comments.py     # Draft comments feature tests (100% coverage)
 │   ├── test_inline_comments.py
 │   ├── test_ssl_config.py
 │   └── test_submit_review.py
@@ -66,13 +67,102 @@ submit_gerrit_review(
 - Post summary feedback, vote labels (e.g., `{"Code-Review": 1}`), and inline comments
 - Control notification scope: `NONE`, `OWNER`, `OWNER_REVIEWERS`, `ALL`
 
+### Post and Manage Draft Comments
+
+Draft comments are **visible only to you** until published. This enables a
+human-in-the-loop AI-assisted review workflow:
+
+1. **AI posts drafts** — `create_draft_comments()` posts all candidate comments
+2. **Human audits** — review drafts in the Gerrit UI, delete any you don't want
+3. **Publish survivors** — `publish_draft_comments()` makes remaining drafts visible
+
+```python
+# Post a single draft comment
+create_draft_comment(
+    change_id: str,
+    path: str,
+    message: str,
+    patchset_number: Optional[str] = None,
+    line: Optional[int] = None,
+    side: Optional[str] = None,          # "REVISION" (default) or "PARENT"
+    range: Optional[Dict[str, int]] = None,
+    in_reply_to: Optional[str] = None,
+    unresolved: Optional[bool] = None,
+)
+
+# Post multiple draft comments in batch (partial-success model)
+create_draft_comments(
+    change_id: str,
+    comments: List[Dict[str, Any]],      # list of comment dicts
+    patchset_number: Optional[str] = None,
+)
+
+# List all your pending draft comments
+list_draft_comments(
+    change_id: str,
+    patchset_number: Optional[str] = None,
+)
+
+# Delete a specific draft by its Gerrit-assigned ID
+delete_draft_comment(
+    change_id: str,
+    draft_id: str,
+    patchset_number: Optional[str] = None,
+)
+
+# Publish all surviving drafts (makes them visible to all reviewers)
+publish_draft_comments(
+    change_id: str,
+    patchset_number: Optional[str] = None,
+    message: Optional[str] = None,       # optional summary message
+    notify: str = "OWNER",
+)
+```
+
+Each comment dict passed to `create_draft_comments()` supports:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `path` | str | ✅ | File path, e.g. `"src/foo.cpp"` |
+| `message` | str | ✅ | Comment text |
+| `line` | int | — | Line number (positive integer) |
+| `side` | str | — | `"REVISION"` or `"PARENT"` |
+| `range` | dict | — | `{start_line, start_character, end_line, end_character}` |
+| `in_reply_to` | str | — | ID of a comment to reply to |
+| `unresolved` | bool | — | Mark as unresolved thread |
+
 ### Example Usage
 
 ```python
 # Fetch latest patchset
 change = fetch_gerrit_change("23824")
 
-# Submit a vote with an inline comment
+# --- Draft comment workflow ---
+
+# 1. AI posts all candidate comments as drafts (visible only to you)
+batch = create_draft_comments(
+    change_id="23824",
+    comments=[
+        {"path": "src/app.py", "line": 42, "message": "Consider using a context manager here."},
+        {"path": "src/app.py", "line": 78, "message": "This variable shadows the outer scope."},
+        {"path": "tests/test_app.py", "line": 12, "message": "Missing edge case: empty input."},
+    ],
+    patchset_number="3",
+)
+print(f"Posted {batch['succeeded']}/{batch['total']} drafts")
+
+# 2. Review your pending drafts
+drafts = list_draft_comments("23824")
+
+# 3. Delete any drafts you don't want to keep
+delete_draft_comment("23824", draft_id="<id from list_draft_comments>")
+
+# 4. Publish the remaining drafts (makes them visible to all reviewers)
+publish_draft_comments("23824", message="AI-assisted review — please check.", notify="OWNER_REVIEWERS")
+
+# --- Standard (immediate) review ---
+
+# Submit a vote with an inline comment (immediately visible)
 submit_gerrit_review(
     change_id="23824",
     message="Looks good overall",
@@ -183,7 +273,12 @@ GERRIT_CA_BUNDLE=/path/to/ca.pem        # Custom CA bundle (takes precedence ove
       "alwaysAllow": [
         "fetch_gerrit_change",
         "fetch_patchset_diff",
-        "submit_gerrit_review"
+        "submit_gerrit_review",
+        "create_draft_comment",
+        "create_draft_comments",
+        "list_draft_comments",
+        "delete_draft_comment",
+        "publish_draft_comments"
       ]
     }
   }
@@ -206,7 +301,12 @@ GERRIT_CA_BUNDLE=/path/to/ca.pem        # Custom CA bundle (takes precedence ove
       "alwaysAllow": [
         "fetch_gerrit_change",
         "fetch_patchset_diff",
-        "submit_gerrit_review"
+        "submit_gerrit_review",
+        "create_draft_comment",
+        "create_draft_comments",
+        "list_draft_comments",
+        "delete_draft_comment",
+        "publish_draft_comments"
       ]
     }
   }
