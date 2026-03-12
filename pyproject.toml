@@ -1,33 +1,41 @@
 [project]
 name = "gerrit-review-mcp"
-version = "0.1.0"
+version = "0.2.1"
 description = "MCP server for Gerrit Code Review"
-authors = [{name = "Omer Cayirtepe", email = "cayirtepeomer@gmail.com"}]
+authors = [{name = "olssone"}]
 license = "MIT"
 readme = "README.md"
 requires-python = ">=3.10"
 classifiers = [
-    "Development Status :: 4 - Beta",
-    "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
-    "mcp[cli]>=1.6.0",
-    "python-dotenv>=1.0.0",
-    "requests>=2.31.0",
+  "mcp[cli]>=1.6.0",
+  "python-dotenv>=1.0.0",
+  "requests>=2.31.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/olssone/gerrit-mcp"
+Repository = "https://github.com/olssone/gerrit-mcp"
+
+[project.scripts]
+gerrit-review-mcp = "gerrit_review_mcp.server:main"
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=7.0.0",
-    "pytest-cov>=4.0.0",
-    "black>=23.0.0",
-    "isort>=5.0.0",
-    "mypy>=1.0.0",
-    "pre-commit>=3.0.0",
-    "testcontainers>=3.7.0",
+  "pytest>=7.0.0",
+  "pytest-cov>=4.0.0",
+  "black>=23.0.0",
+  "isort>=5.0.0",
+  "mypy>=1.0.0",
+  "pre-commit>=3.0.0",
+  "testcontainers>=3.7.0",
 ]
 
 [build-system]
@@ -35,16 +43,16 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["."]
+packages = ["src/gerrit_review_mcp"]
 exclude = [
-    "tests/",
-    ".changeset/",
-    ".env*",
-    ".git*",
-    "*.md",
-    "Dockerfile",
-    "smithery.yaml",
-    "uv.lock"
+  "tests/",
+  "rpm/",
+  ".env*",
+  ".git*",
+  "*.md",
+  "Dockerfile",
+  "uv.lock",
+  "Makefile",
 ]
 
 [tool.pytest.ini_options]
@@ -53,20 +61,21 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = [
-    "--strict-markers",
-    "--strict-config",
-    "-ra",
+  "--strict-markers",
+  "--strict-config",
+  "-ra",
 ]
 markers = [
-    "integration: marks tests as integration tests",
-    "docker: marks tests that require Docker",
+  "integration: marks tests as integration tests",
+  "docker: marks tests that require Docker",
 ]
 
 [tool.black]
 line-length = 88
+target-version = ["py312"]
 
 [tool.isort]
 profile = "black"
 
 [tool.mypy]
-strict = true 
+strict = true
