@@ -67,14 +67,10 @@ submit_gerrit_review(
 - Post summary feedback, vote labels (e.g., `{"Code-Review": 1}`), and inline comments
 - Control notification scope: `NONE`, `OWNER`, `OWNER_REVIEWERS`, `ALL`
 
-### Post and Manage Draft Comments
+### Post Draft Comments
 
-Draft comments are **visible only to you** until published. This enables a
-human-in-the-loop AI-assisted review workflow:
-
-1. **AI posts drafts** — `create_draft_comments()` posts all candidate comments
-2. **Human audits** — review drafts in the Gerrit UI, delete any you don't want
-3. **Publish survivors** — `publish_draft_comments()` makes remaining drafts visible
+Draft comments are **visible only to you** until published via the Gerrit UI.
+Post them with the AI, then audit and publish in Gerrit as usual.
 
 ```python
 # Post a single draft comment
@@ -96,27 +92,6 @@ create_draft_comments(
     comments: List[Dict[str, Any]],      # list of comment dicts
     patchset_number: Optional[str] = None,
 )
-
-# List all your pending draft comments
-list_draft_comments(
-    change_id: str,
-    patchset_number: Optional[str] = None,
-)
-
-# Delete a specific draft by its Gerrit-assigned ID
-delete_draft_comment(
-    change_id: str,
-    draft_id: str,
-    patchset_number: Optional[str] = None,
-)
-
-# Publish all surviving drafts (makes them visible to all reviewers)
-publish_draft_comments(
-    change_id: str,
-    patchset_number: Optional[str] = None,
-    message: Optional[str] = None,       # optional summary message
-    notify: str = "OWNER",
-)
 ```
 
 Each comment dict passed to `create_draft_comments()` supports:
@@ -137,9 +112,7 @@ Each comment dict passed to `create_draft_comments()` supports:
 # Fetch latest patchset
 change = fetch_gerrit_change("23824")
 
-# --- Draft comment workflow ---
-
-# 1. AI posts all candidate comments as drafts (visible only to you)
+# Post draft comments (visible only to you; review and publish in Gerrit UI)
 batch = create_draft_comments(
     change_id="23824",
     comments=[
@@ -150,15 +123,6 @@ batch = create_draft_comments(
     patchset_number="3",
 )
 print(f"Posted {batch['succeeded']}/{batch['total']} drafts")
-
-# 2. Review your pending drafts
-drafts = list_draft_comments("23824")
-
-# 3. Delete any drafts you don't want to keep
-delete_draft_comment("23824", draft_id="<id from list_draft_comments>")
-
-# 4. Publish the remaining drafts (makes them visible to all reviewers)
-publish_draft_comments("23824", message="AI-assisted review — please check.", notify="OWNER_REVIEWERS")
 
 # --- Standard (immediate) review ---
 
@@ -275,10 +239,7 @@ GERRIT_CA_BUNDLE=/path/to/ca.pem        # Custom CA bundle (takes precedence ove
         "fetch_patchset_diff",
         "submit_gerrit_review",
         "create_draft_comment",
-        "create_draft_comments",
-        "list_draft_comments",
-        "delete_draft_comment",
-        "publish_draft_comments"
+        "create_draft_comments"
       ]
     }
   }
@@ -303,10 +264,7 @@ GERRIT_CA_BUNDLE=/path/to/ca.pem        # Custom CA bundle (takes precedence ove
         "fetch_patchset_diff",
         "submit_gerrit_review",
         "create_draft_comment",
-        "create_draft_comments",
-        "list_draft_comments",
-        "delete_draft_comment",
-        "publish_draft_comments"
+        "create_draft_comments"
       ]
     }
   }
@@ -424,6 +382,118 @@ make rpm VERSION=0.2.0 RELEASE=2
 ```bash
 sudo dnf remove gerrit-review-mcp
 ```
+
+---
+
+## Example Use Case: LLM-Assisted Code Review
+
+One practical way to use the Gerrit MCP server is to integrate it with an LLM
+agent to perform an automated first-pass code inspection. The MCP server acts
+as a structured integration layer between Gerrit and automated reasoning
+systems — the MCP server provides infrastructure primitives, the LLM provides
+analysis, and the human reviewer retains accountability.
+
+### 1. Retrieve Change Context
+
+Use [`fetch_gerrit_change`](#fetch-change-details) and
+[`fetch_patchset_diff`](#compare-patchset-differences) to retrieve:
+
+- Change metadata and commit message
+- Target branch information
+- The list of modified files
+- Line-level diffs for the patchset
+
+This provides the LLM with the authoritative description and delta surface of
+the change.
+
+### 2. Perform Repository-Aware Analysis
+
+After retrieving the patchset diff, the LLM can:
+
+- Check out the repository at the patchset revision
+- Traverse related files not included in the diff
+- Inspect call sites of modified interfaces
+- Analyze consumers of changed data structures
+- Evaluate architectural and dependency impact
+
+This enables reasoning beyond the patchset itself, covering areas such as:
+
+- Control and data flow implications
+- API contract changes
+- Error handling completeness
+- Concurrency risks
+- Performance impact
+- Security implications
+- Backward compatibility
+
+The MCP server provides the change context; the LLM performs the reasoning.
+
+### 3. Generate Structured Findings
+
+Instruct the LLM to categorize findings into:
+
+| Category | Description |
+|----------|-------------|
+| **Defects** | Correctness or safety issues |
+| **Concerns** | Design or maintainability risks |
+| **Questions** | Clarifications for the author |
+
+Each finding should reference a file path and, when applicable, a line number.
+
+### 4. Post Draft Comments Back to Gerrit
+
+Using [`create_draft_comment`](#post-draft-comments) or
+[`create_draft_comments`](#post-draft-comments), the LLM posts its findings as
+draft comments directly on the Gerrit change.
+
+Importantly, **the agent does not submit or vote on the review** — it only
+creates draft comments. The drafts are visible only to the reviewer until
+explicitly published.
+
+```python
+create_draft_comments(
+    change_id="31357",
+    comments=[
+        {
+            "path": "src/component.cpp",
+            "line": 142,
+            "message": "Defect: resource acquired here is not released on the error path at line 158.",
+            "unresolved": True,
+        },
+        {
+            "path": "src/component.cpp",
+            "line": 87,
+            "message": "Concern: this interface change may break callers in src/adapter.cpp (line 203).",
+            "unresolved": True,
+        },
+        {
+            "path": "include/protocol.h",
+            "line": 34,
+            "message": "Question: is the new field intended to be zero-initialized for legacy clients?",
+            "unresolved": True,
+        },
+    ],
+)
+```
+
+### 5. Human Disposition
+
+A human reviewer then:
+
+1. Reviews the generated draft comments in Gerrit
+2. Edits or removes comments as appropriate
+3. Adds additional judgment where necessary
+4. Submits the finalized review
+
+### Why This Matters
+
+This model augments existing review workflows without altering Gerrit's core
+review model:
+
+- **MCP server** — reliable access to change metadata, diffs, and comment
+  creation APIs
+- **LLM** — higher-level inspection logic and structured finding generation
+- **Human reviewer** — final accountability and editorial control
 
 ---
 
