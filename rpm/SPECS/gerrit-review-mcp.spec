@@ -7,7 +7,7 @@
 %define source_dir %{name}-%{version}
 
 Name:           gerrit-review-mcp
-Version:        0.2.1
+Version:        0.2.2
 Release:        1%{?dist}
 Summary:        MCP server for Gerrit Code Review integration
 

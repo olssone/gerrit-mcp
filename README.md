@@ -2,7 +2,7 @@
 
 MCP server for Gerrit Code Review integration
 
-Provides tools for fetching changes, comparing patchsets, submitting reviews, and posting draft inline comments via the Gerrit REST API.
+Provides tools for fetching changes, comparing patchsets, submitting reviews, posting draft inline comments, listing and deleting drafts, and publishing drafts via the Gerrit REST API.
 
 ---
 
@@ -69,8 +69,9 @@ submit_gerrit_review(
 
 ### Post Draft Comments
 
-Draft comments are **visible only to you** until published via the Gerrit UI.
-Post them with the AI, then audit and publish in Gerrit as usual.
+Draft comments are **visible only to you** until published. Post them with the
+AI, then audit, prune, and publish in the Gerrit UI — or use
+`publish_draft_comments()` to publish programmatically.
 
 ```python
 # Post a single draft comment
@@ -105,6 +106,31 @@ Each comment dict passed to `create_draft_comments()` supports:
 | `range` | dict | — | `{start_line, start_character, end_line, end_character}` |
 | `in_reply_to` | str | — | ID of a comment to reply to |
 | `unresolved` | bool | — | Mark as unresolved thread |
+
+### Manage Draft Comments
+
+```python
+# List all your pending drafts on a revision
+list_draft_comments(
+    change_id: str,
+    patchset_number: Optional[str] = None,
+)
+
+# Delete a specific draft by ID
+delete_draft_comment(
+    change_id: str,
+    draft_id: str,
+    patchset_number: Optional[str] = None,
+)
+
+# Publish all drafts, making them visible to reviewers
+publish_draft_comments(
+    change_id: str,
+    patchset_number: Optional[str] = None,
+    message: Optional[str] = None,
+    notify: str = "OWNER",              # "NONE", "OWNER", "OWNER_REVIEWERS", "ALL"
+)
+```
 
 ### Example Usage
 
@@ -141,6 +167,15 @@ diff = fetch_patchset_diff("23824", "1", "2")
 
 # Get diff for a specific file
 file_diff = fetch_patchset_diff("23824", "1", "2", "path/to/file.py")
+
+# List pending drafts before publishing
+drafts = list_draft_comments("23824")
+
+# Delete an unwanted draft by its ID
+delete_draft_comment("23824", drafts["drafts"]["src/app.py"][0]["id"])
+
+# Publish all remaining drafts
+publish_draft_comments("23824", message="AI-assisted first-pass review complete.")
 ```
 
 ---
@@ -239,7 +274,10 @@ GERRIT_CA_BUNDLE=/path/to/ca.pem        # Custom CA bundle (takes precedence ove
         "fetch_patchset_diff",
         "submit_gerrit_review",
         "create_draft_comment",
-        "create_draft_comments"
+        "create_draft_comments",
+        "list_draft_comments",
+        "delete_draft_comment",
+        "publish_draft_comments"
       ]
     }
   }
@@ -264,7 +302,10 @@ GERRIT_CA_BUNDLE=/path/to/ca.pem        # Custom CA bundle (takes precedence ove
         "fetch_patchset_diff",
         "submit_gerrit_review",
         "create_draft_comment",
-        "create_draft_comments"
+        "create_draft_comments",
+        "list_draft_comments",
+        "delete_draft_comment",
+        "publish_draft_comments"
       ]
     }
   }
@@ -480,10 +521,10 @@ create_draft_comments(
 
 A human reviewer then:
 
-1. Reviews the generated draft comments in Gerrit
-2. Edits or removes comments as appropriate
+1. Reviews the generated draft comments via `list_draft_comments()` or directly in Gerrit
+2. Deletes any unwanted drafts via `delete_draft_comment()` or the Gerrit UI
 3. Adds additional judgment where necessary
-4. Submits the finalized review
+4. Publishes the finalized review via `publish_draft_comments()` or the Gerrit UI
 
 ### Why This Matters
 

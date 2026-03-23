@@ -754,6 +754,123 @@ def create_draft_comments(
     }
 
 
+@mcp.tool()
+def list_draft_comments(
+    ctx: Context,
+    change_id: str,
+    patchset_number: Optional[str] = None,
+) -> Dict[str, Any]:
+    """List all draft comments you have posted on a Gerrit change revision.
+
+    Draft comments are visible only to you. Use this to review pending drafts
+    before deciding to publish or delete them.
+
+    Args:
+      ctx: MCP request context.
+      change_id: The Gerrit change ID.
+      patchset_number: Patchset to query; defaults to the current revision.
+
+    Returns:
+      Dict with keys:
+        change_id, revision, drafts (file-keyed map of DraftCommentInfo lists).
+    """
+    revision = _resolve_revision(ctx, change_id, patchset_number)
+    drafts_endpoint = f"a/changes/{change_id}/revisions/{revision}/drafts"
+    drafts = make_gerrit_rest_request(ctx, drafts_endpoint)
+
+    return {
+        "change_id": change_id,
+        "revision": revision,
+        "drafts": drafts,
+    }
+
+
+@mcp.tool()
+def delete_draft_comment(
+    ctx: Context,
+    change_id: str,
+    draft_id: str,
+    patchset_number: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Delete a specific draft comment from a Gerrit change revision.
+
+    Use list_draft_comments() to obtain the 'id' field of existing drafts,
+    or capture the 'id' returned by create_draft_comment().
+
+    Args:
+      ctx: MCP request context.
+      change_id: The Gerrit change ID.
+      draft_id: The Gerrit-assigned draft comment ID (from DraftCommentInfo.id).
+      patchset_number: Patchset the draft lives on; defaults to the current revision.
+
+    Returns:
+      Dict with keys: change_id, revision, draft_id, deleted (True).
+    """
+    revision = _resolve_revision(ctx, change_id, patchset_number)
+    delete_endpoint = f"a/changes/{change_id}/revisions/{revision}/drafts/{draft_id}"
+    make_gerrit_rest_request(ctx, delete_endpoint, method="DELETE")
+
+    return {
+        "change_id": change_id,
+        "revision": revision,
+        "draft_id": draft_id,
+        "deleted": True,
+    }
+
+
+@mcp.tool()
+def publish_draft_comments(
+    ctx: Context,
+    change_id: str,
+    patchset_number: Optional[str] = None,
+    message: Optional[str] = None,
+    notify: str = "OWNER",
+) -> Dict[str, Any]:
+    """Publish all draft comments on a Gerrit change, making them visible to reviewers.
+
+    This uses PUBLISH_ALL_REVISIONS so drafts across all patchsets are published
+    in a single call. After this operation the drafts become regular inline comments
+    visible to everyone with access to the change.
+
+    The typical AI-assisted review workflow is:
+      1. create_draft_comments() — AI posts candidate comments as drafts
+      2. Human reviews drafts in the Gerrit UI, deletes any unwanted ones
+      3. publish_draft_comments() — surviving drafts become visible
+
+    Args:
+      ctx: MCP request context.
+      change_id: The Gerrit change ID.
+      patchset_number: Revision to submit the review against; defaults to current.
+      message: Optional summary message to attach to the review at publish time.
+      notify: Notification scope — 'OWNER' (default), 'NONE', 'OWNER_REVIEWERS', 'ALL'.
+
+    Returns:
+      Dict with keys: change_id, revision, published (raw Gerrit ReviewResult).
+    """
+    revision = _resolve_revision(ctx, change_id, patchset_number)
+
+    payload: Dict[str, Any] = {
+        "drafts": "PUBLISH_ALL_REVISIONS",
+        "notify": notify,
+    }
+    if message is not None:
+        payload["message"] = message
+
+    review_endpoint = f"a/changes/{change_id}/revisions/{revision}/review"
+    response = make_gerrit_rest_request(
+        ctx,
+        review_endpoint,
+        method="POST",
+        json_payload=payload,
+    )
+
+    return {
+        "change_id": change_id,
+        "revision": revision,
+        "published": response,
+    }
+
+
 def main() -> None:
     """Entry point for the gerrit-review-mcp console script."""
     logger.info("Starting Gerrit Review MCP server")
